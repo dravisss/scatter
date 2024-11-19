@@ -178,6 +178,7 @@ def main():
         plot_df["Tooltip_Text"] = plot_df["Text"].apply(lambda x: f"<br>".join(textwrap.wrap(x, width=50)))
         
         # Add additional columns if available
+        tooltip_columns = []
         if hasattr(st.session_state, 'additional_columns'):
             for col_name, col_data in st.session_state.additional_columns.items():
                 # Ensure col_data has the same length as plot_df
@@ -185,9 +186,13 @@ def main():
                     plot_df[col_name] = col_data
                     # Format additional columns for tooltip
                     if isinstance(col_data[0], (int, float)):
-                        plot_df[f"Tooltip_{col_name}"] = [f"{col_name}: {val:.2f}" for val in col_data]
+                        tooltip_col = f"Tooltip_{col_name}"
+                        plot_df[tooltip_col] = [f"{col_name}: {val:.2f}" for val in col_data]
+                        tooltip_columns.append(tooltip_col)
                     else:
-                        plot_df[f"Tooltip_{col_name}"] = [f"{col_name}: {str(val)}" for val in col_data]
+                        tooltip_col = f"Tooltip_{col_name}"
+                        plot_df[tooltip_col] = [f"{col_name}: {str(val)}" for val in col_data]
+                        tooltip_columns.append(tooltip_col)
                 else:
                     st.warning(f"Column {col_name} has different length than the main data and will be skipped.")
         
@@ -200,13 +205,12 @@ def main():
         <b>Texto:</b><br>%{customdata[0]}
         <br>
         <b>Cluster:</b> %{customdata[1]}
-        <br>
         """
         
         # Add additional metadata to hover template if available
-        if hasattr(st.session_state, 'additional_columns'):
-            for i, col_name in enumerate(st.session_state.additional_columns.keys(), start=2):
-                hover_template += f"<b>{col_name}:</b> %{{customdata[{i}]}}<br>"
+        if tooltip_columns:
+            for i, col_name in enumerate(tooltip_columns, start=2):
+                hover_template += f"<br>%{{customdata[{i}]}}"
         
         hover_template += "<extra></extra>"
         
@@ -216,9 +220,10 @@ def main():
         
         # Prepare custom data for hover
         customdata = [plot_df["Tooltip_Text"].tolist(), plot_df["Cluster"].tolist()]
-        if hasattr(st.session_state, 'additional_columns'):
-            for col_name in st.session_state.additional_columns.keys():
-                customdata.append(plot_df[f"Tooltip_{col_name}"].tolist())
+        if tooltip_columns:
+            for col_name in tooltip_columns:
+                customdata.append(plot_df[col_name].tolist())
+        customdata = np.array(customdata).T  # Transpose to match Plotly's expected format
         
         if umap_embeddings.shape[1] == 3:
             fig = px.scatter_3d(
@@ -250,20 +255,14 @@ def main():
                 yanchor="top",
                 y=0.99,
                 xanchor="left",
-                x=1.02,
-                bgcolor="rgba(255, 255, 255, 0.8)",
-                bordercolor="rgba(0, 0, 0, 0.2)",
-                borderwidth=1
-            ),
-            margin=dict(l=20, r=200, t=40, b=20),
-            hovermode='closest'
+                x=0.01
+            )
         )
         
         # Update hover template for all traces
-        fig.update_traces(
-            customdata=list(zip(*customdata)),
-            hovertemplate=hover_template
-        )
+        for trace in fig.data:
+            trace.customdata = customdata
+            trace.hovertemplate = hover_template
         
         st.plotly_chart(fig, use_container_width=True)
         st.write(f"Porcentagem de outliers: {outlier_percentage:.2f}%")
