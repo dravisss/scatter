@@ -1,5 +1,8 @@
 [server]
 enableXsrfProtection = false
+runOnSave = true
+maxUploadSize = 200
+fileWatcherType = "none"
 
 [theme]
 primaryColor = "#F63366"
