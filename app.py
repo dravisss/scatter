@@ -193,6 +193,30 @@ def main():
         plot_df["Text"] = texts
         plot_df["original_index"] = np.arange(len(embeddings))
         
+        def wrap_text(text, width=50):
+            """Wrap text at specified width."""
+            if not isinstance(text, str):
+                return str(text)
+            words = text.split()
+            lines = []
+            current_line = []
+            current_length = 0
+            
+            for word in words:
+                if current_length + len(word) + 1 <= width:
+                    current_line.append(word)
+                    current_length += len(word) + 1
+                else:
+                    if current_line:
+                        lines.append(' '.join(current_line))
+                    current_line = [word]
+                    current_length = len(word)
+            
+            if current_line:
+                lines.append(' '.join(current_line))
+            
+            return '<br>'.join(lines)
+        
         # Format text for tooltip with text wrapping and left alignment
         hover_template = (
             "<b>%{customdata[2]}</b><br>"
@@ -237,6 +261,10 @@ def main():
         width = 1200
         height = int(width * 9/16)
         
+        # Create plot controls
+        st.subheader("Visualização")
+        point_size = st.slider("Tamanho dos pontos", 1, 20, 5)
+        
         # Get unique clusters for legend
         unique_clusters = plot_df["Cluster"].unique()
         cluster_colors = {cluster: i for i, cluster in enumerate(unique_clusters)}
@@ -253,7 +281,7 @@ def main():
                     mode='markers',
                     name=cluster,
                     marker=dict(
-                        size=st.slider("Tamanho dos pontos", 1, 20, 5),
+                        size=point_size,
                         color=cluster_colors[cluster],
                         colorscale='Viridis',
                     ),
@@ -287,7 +315,7 @@ def main():
                     mode='markers',
                     name=cluster,
                     marker=dict(
-                        size=st.slider("Tamanho dos pontos", 1, 20, 5),
+                        size=point_size,
                         color=cluster_colors[cluster],
                         colorscale='Viridis',
                     ),
