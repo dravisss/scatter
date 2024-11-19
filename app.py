@@ -185,19 +185,46 @@ def main():
         outlier_percentage = (n_outliers / len(cluster_labels)) * 100
         
         # Prepare data for plotting
-        plot_df = pd.DataFrame({
-            **{f"UMAP{i+1}": umap_embeddings[:, i] for i in range(umap_embeddings.shape[1])},
-            "Cluster": [f"Cluster {l}" if l >= 0 else "Outliers" for l in cluster_labels],
-            "Text": texts,
-            "original_index": original_indices
-        })
+        plot_df = pd.DataFrame(
+            umap_embeddings,
+            columns=[f"UMAP{i+1}" for i in range(umap_embeddings.shape[1])]
+        )
+        plot_df["Cluster"] = [f"Cluster {l}" if l >= 0 else "Outliers" for l in cluster_labels]
+        plot_df["Text"] = texts
+        plot_df["original_index"] = np.arange(len(embeddings))
         
-        # Format text for tooltip
+        # Format text for tooltip with text wrapping and left alignment
+        def wrap_text(text, width=50):
+            """Wrap text at specified width."""
+            if not isinstance(text, str):
+                return str(text)
+            words = text.split()
+            lines = []
+            current_line = []
+            current_length = 0
+            
+            for word in words:
+                if current_length + len(word) + 1 <= width:
+                    current_line.append(word)
+                    current_length += len(word) + 1
+                else:
+                    if current_line:
+                        lines.append(' '.join(current_line))
+                    current_line = [word]
+                    current_length = len(word)
+            
+            if current_line:
+                lines.append(' '.join(current_line))
+            
+            return '<br>'.join(lines)
+
         hover_template = (
-            "<b>%{customdata[2]}</b><br>"  # Column 1 name
-            "%{customdata[0]}<br><br>"     # Column 2 name
-            "<b>%{customdata[3]}</b><br>"  # Column 1 value
-            "%{customdata[1]}"             # Column 2 value
+            '<div style="text-align: left; max-width: 300px;">'
+            "<b>%{customdata[2]}</b><br>"
+            "%{customdata[0]}<br><br>"
+            "<b>%{customdata[3]}</b><br>"
+            "%{customdata[1]}"
+            "</div>"
         )
         
         # Add additional columns if available
@@ -214,8 +241,8 @@ def main():
         
         # Prepare custom data for hover using original indices
         if hasattr(st.session_state, 'text_columns'):
-            col1_data = np.array(st.session_state.text_columns['col1'])[plot_df['original_index']]
-            col2_data = np.array(st.session_state.text_columns['col2'])[plot_df['original_index']]
+            col1_data = np.array([wrap_text(text) for text in st.session_state.text_columns['col1']])[plot_df['original_index']]
+            col2_data = np.array([wrap_text(text) for text in st.session_state.text_columns['col2']])[plot_df['original_index']]
             col1_name = st.session_state.text_columns.get('col1_name', 'Column 1')
             col2_name = st.session_state.text_columns.get('col2_name', 'Column 2')
             
@@ -230,8 +257,8 @@ def main():
             texts_array = np.array(texts)[plot_df['original_index']]
             parts = [text.split(" | ", 1) for text in texts_array]
             customdata = np.array([
-                [p[0] for p in parts],  # First part
-                [p[1] if len(p) > 1 else "" for p in parts],  # Second part
+                [wrap_text(p[0]) for p in parts],  # First part
+                [wrap_text(p[1] if len(p) > 1 else "") for p in parts],  # Second part
                 ["Column 1"] * len(plot_df),
                 ["Column 2"] * len(plot_df)
             ]).T
@@ -267,9 +294,9 @@ def main():
                 y="UMAP2",
                 color="Cluster",
                 title="Visualização UMAP 2D",
-                size=[point_size] * len(plot_df),
                 custom_data=customdata
             )
+            fig.update_traces(marker=dict(size=point_size))
         
         # Update layout and traces
         fig.update_layout(
