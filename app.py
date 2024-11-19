@@ -194,64 +194,26 @@ def main():
         plot_df["original_index"] = np.arange(len(embeddings))
         
         # Format text for tooltip with text wrapping and left alignment
-        def wrap_text(text, width=50):
-            """Wrap text at specified width."""
-            if not isinstance(text, str):
-                return str(text)
-            words = text.split()
-            lines = []
-            current_line = []
-            current_length = 0
-            
-            for word in words:
-                if current_length + len(word) + 1 <= width:
-                    current_line.append(word)
-                    current_length += len(word) + 1
-                else:
-                    if current_line:
-                        lines.append(' '.join(current_line))
-                    current_line = [word]
-                    current_length = len(word)
-            
-            if current_line:
-                lines.append(' '.join(current_line))
-            
-            return '<br>'.join(lines)
-
         hover_template = (
-            '<div style="text-align: left; max-width: 300px;">'
             "<b>%{customdata[2]}</b><br>"
             "%{customdata[0]}<br><br>"
             "<b>%{customdata[3]}</b><br>"
             "%{customdata[1]}"
-            "</div>"
         )
         
-        # Add additional columns if available
-        tooltip_columns = []
+        # Add additional metadata to hover template if available
         if hasattr(st.session_state, 'additional_columns'):
-            for col_name, col_data in st.session_state.additional_columns.items():
-                if len(col_data) == len(plot_df):
-                    plot_df[col_name] = col_data
-                    tooltip_columns.append(col_name)
-        
-        # Create plot
-        st.subheader("Visualização")
-        point_size = st.slider("Tamanho dos pontos", 1, 20, 5)
-        
-        # Prepare custom data for hover using original indices
-        if hasattr(st.session_state, 'text_columns'):
-            col1_data = [wrap_text(text) for text in st.session_state.text_columns['col1']]
-            col2_data = [wrap_text(text) for text in st.session_state.text_columns['col2']]
-            col1_name = st.session_state.text_columns.get('col1_name', 'Column 1')
-            col2_name = st.session_state.text_columns.get('col2_name', 'Column 2')
-            
-            customdata = np.array([
-                col1_data,  # Column 1 values
-                col2_data,  # Column 2 values
-                [col1_name] * len(plot_df),  # Column 1 name
-                [col2_name] * len(plot_df),  # Column 2 name
-            ]).T
+            tooltip_columns = list(st.session_state.additional_columns.keys())
+            for i, col_name in enumerate(tooltip_columns):
+                hover_template += f"<br><b>{col_name}:</b> %{{customdata[{i+4}]}}"
+                col_data = plot_df[col_name].tolist()
+                customdata = np.c_[np.array([
+                    [wrap_text(text) for text in st.session_state.text_columns['col1']],  # Column 1 values
+                    [wrap_text(text) for text in st.session_state.text_columns['col2']],  # Column 2 values
+                    [st.session_state.text_columns.get('col1_name', 'Column 1')] * len(plot_df),  # Column 1 name
+                    [st.session_state.text_columns.get('col2_name', 'Column 2')] * len(plot_df),  # Column 2 name
+                ]).T, col_data]
+            customdata = np.c_[customdata, plot_df[tooltip_columns].values]
         else:
             # Fallback to using the concatenated text
             texts_array = texts
@@ -262,13 +224,6 @@ def main():
                 ["Column 1"] * len(plot_df),
                 ["Column 2"] * len(plot_df)
             ]).T
-
-        # Add additional metadata to hover template if available
-        if tooltip_columns:
-            for i, col_name in enumerate(tooltip_columns):
-                hover_template += f"<br><b>{col_name}:</b> %{{customdata[{i+4}]}}"
-                col_data = plot_df[col_name].tolist()
-                customdata = np.c_[customdata, col_data]
         
         hover_template += "<extra></extra>"
         
@@ -276,45 +231,79 @@ def main():
         width = 1200
         height = int(width * 9/16)
         
+        # Get unique clusters for legend
+        unique_clusters = plot_df["Cluster"].unique()
+        cluster_colors = {cluster: i for i, cluster in enumerate(unique_clusters)}
+        
         # Create the plot based on dimensions
         if umap_embeddings.shape[1] == 3:
-            fig = go.Figure(data=[go.Scatter3d(
-                x=plot_df["UMAP1"],
-                y=plot_df["UMAP2"],
-                z=plot_df["UMAP3"],
-                mode='markers',
-                marker=dict(
-                    size=point_size,
-                    color=pd.Categorical(plot_df["Cluster"]).codes,
-                    colorscale='Viridis',
-                ),
-                text=plot_df["Text"],
-                customdata=customdata,
-                hovertemplate=hover_template
-            )])
+            traces = []
+            for cluster in unique_clusters:
+                mask = plot_df["Cluster"] == cluster
+                traces.append(go.Scatter3d(
+                    x=plot_df[mask]["UMAP1"],
+                    y=plot_df[mask]["UMAP2"],
+                    z=plot_df[mask]["UMAP3"],
+                    mode='markers',
+                    name=cluster,
+                    marker=dict(
+                        size=st.slider("Tamanho dos pontos", 1, 20, 5),
+                        color=cluster_colors[cluster],
+                        colorscale='Viridis',
+                    ),
+                    text=plot_df[mask]["Text"],
+                    customdata=customdata[mask],
+                    hovertemplate=hover_template
+                ))
+            
+            fig = go.Figure(data=traces)
             fig.update_layout(
                 title="Visualização UMAP 3D",
                 width=width,
-                height=height
+                height=height,
+                showlegend=True,
+                legend=dict(
+                    title="Clusters",
+                    yanchor="top",
+                    y=0.99,
+                    xanchor="left",
+                    x=0.01
+                ),
+                hovermode='closest'
             )
         else:
-            fig = go.Figure(data=[go.Scatter(
-                x=plot_df["UMAP1"],
-                y=plot_df["UMAP2"],
-                mode='markers',
-                marker=dict(
-                    size=point_size,
-                    color=pd.Categorical(plot_df["Cluster"]).codes,
-                    colorscale='Viridis',
-                ),
-                text=plot_df["Text"],
-                customdata=customdata,
-                hovertemplate=hover_template
-            )])
+            traces = []
+            for cluster in unique_clusters:
+                mask = plot_df["Cluster"] == cluster
+                traces.append(go.Scatter(
+                    x=plot_df[mask]["UMAP1"],
+                    y=plot_df[mask]["UMAP2"],
+                    mode='markers',
+                    name=cluster,
+                    marker=dict(
+                        size=st.slider("Tamanho dos pontos", 1, 20, 5),
+                        color=cluster_colors[cluster],
+                        colorscale='Viridis',
+                    ),
+                    text=plot_df[mask]["Text"],
+                    customdata=customdata[mask],
+                    hovertemplate=hover_template
+                ))
+            
+            fig = go.Figure(data=traces)
             fig.update_layout(
                 title="Visualização UMAP 2D",
                 width=width,
-                height=height
+                height=height,
+                showlegend=True,
+                legend=dict(
+                    title="Clusters",
+                    yanchor="top",
+                    y=0.99,
+                    xanchor="left",
+                    x=0.01
+                ),
+                hovermode='closest'
             )
         
         st.plotly_chart(fig, use_container_width=True)
