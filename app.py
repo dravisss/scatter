@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
+import plotly.graph_objects as go
 import openai
 from dotenv import load_dotenv
 import os
@@ -241,8 +241,8 @@ def main():
         
         # Prepare custom data for hover using original indices
         if hasattr(st.session_state, 'text_columns'):
-            col1_data = np.array([wrap_text(text) for text in st.session_state.text_columns['col1']])[plot_df['original_index']]
-            col2_data = np.array([wrap_text(text) for text in st.session_state.text_columns['col2']])[plot_df['original_index']]
+            col1_data = [wrap_text(text) for text in st.session_state.text_columns['col1']]
+            col2_data = [wrap_text(text) for text in st.session_state.text_columns['col2']]
             col1_name = st.session_state.text_columns.get('col1_name', 'Column 1')
             col2_name = st.session_state.text_columns.get('col2_name', 'Column 2')
             
@@ -254,7 +254,7 @@ def main():
             ]).T
         else:
             # Fallback to using the concatenated text
-            texts_array = np.array(texts)[plot_df['original_index']]
+            texts_array = texts
             parts = [text.split(" | ", 1) for text in texts_array]
             customdata = np.array([
                 [wrap_text(p[0]) for p in parts],  # First part
@@ -262,12 +262,12 @@ def main():
                 ["Column 1"] * len(plot_df),
                 ["Column 2"] * len(plot_df)
             ]).T
-        
+
         # Add additional metadata to hover template if available
         if tooltip_columns:
             for i, col_name in enumerate(tooltip_columns):
                 hover_template += f"<br><b>{col_name}:</b> %{{customdata[{i+4}]}}"
-                col_data = np.array(plot_df[col_name])[plot_df['original_index']].tolist()
+                col_data = plot_df[col_name].tolist()
                 customdata = np.c_[customdata, col_data]
         
         hover_template += "<extra></extra>"
@@ -276,45 +276,46 @@ def main():
         width = 1200
         height = int(width * 9/16)
         
+        # Create the plot based on dimensions
         if umap_embeddings.shape[1] == 3:
-            fig = px.scatter_3d(
-                plot_df,
-                x="UMAP1",
-                y="UMAP2",
-                z="UMAP3",
-                color="Cluster",
+            fig = go.Figure(data=[go.Scatter3d(
+                x=plot_df["UMAP1"],
+                y=plot_df["UMAP2"],
+                z=plot_df["UMAP3"],
+                mode='markers',
+                marker=dict(
+                    size=point_size,
+                    color=pd.Categorical(plot_df["Cluster"]).codes,
+                    colorscale='Viridis',
+                ),
+                text=plot_df["Text"],
+                customdata=customdata,
+                hovertemplate=hover_template
+            )])
+            fig.update_layout(
                 title="Visualização UMAP 3D",
-                size=[point_size] * len(plot_df),
-                custom_data=customdata
+                width=width,
+                height=height
             )
         else:
-            fig = px.scatter(
-                plot_df,
-                x="UMAP1",
-                y="UMAP2",
-                color="Cluster",
+            fig = go.Figure(data=[go.Scatter(
+                x=plot_df["UMAP1"],
+                y=plot_df["UMAP2"],
+                mode='markers',
+                marker=dict(
+                    size=point_size,
+                    color=pd.Categorical(plot_df["Cluster"]).codes,
+                    colorscale='Viridis',
+                ),
+                text=plot_df["Text"],
+                customdata=customdata,
+                hovertemplate=hover_template
+            )])
+            fig.update_layout(
                 title="Visualização UMAP 2D",
-                custom_data=customdata
+                width=width,
+                height=height
             )
-            fig.update_traces(marker=dict(size=point_size))
-        
-        # Update layout and traces
-        fig.update_layout(
-            width=width,
-            height=height,
-            showlegend=True,
-            legend=dict(
-                title="Clusters",
-                yanchor="top",
-                y=0.99,
-                xanchor="left",
-                x=0.01
-            ),
-            hovermode='closest'
-        )
-        
-        # Update hover template for all traces
-        fig.update_traces(hovertemplate=hover_template)
         
         st.plotly_chart(fig, use_container_width=True)
         st.write(f"Porcentagem de outliers: {outlier_percentage:.2f}%")
