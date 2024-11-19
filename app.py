@@ -29,6 +29,10 @@ if not os.path.exists(EMBEDDINGS_DIR):
 def handle_new_file(uploaded_file):
     """Process a new uploaded file."""
     try:
+        # Clear session state
+        if hasattr(st.session_state, 'additional_columns'):
+            del st.session_state.additional_columns
+        
         # Read CSV
         df = pd.read_csv(uploaded_file)
         if len(df.columns) < 2:
@@ -61,6 +65,12 @@ def handle_existing_file(filepath):
                 return None, None, None
             
             embeddings, columns_data, column_names = result
+            
+            # Ensure we have at least two columns
+            if len(columns_data) < 2:
+                st.error("Invalid data format: need at least two columns")
+                return None, None, None
+            
             texts = [f"{str(c1)} | {str(c2)}" for c1, c2 in zip(columns_data[0], columns_data[1])]
             
             # Create info message about the data
@@ -72,9 +82,17 @@ def handle_existing_file(filepath):
             
             # Store additional columns in session state
             if len(column_names) > 2:
-                st.session_state.additional_columns = {
-                    name: data for name, data in zip(column_names[2:], columns_data[2:])
-                }
+                # Validate lengths before storing
+                base_length = len(columns_data[0])
+                valid_columns = {}
+                for name, data in zip(column_names[2:], columns_data[2:]):
+                    if len(data) == base_length:
+                        valid_columns[name] = data
+                    else:
+                        st.warning(f"Column {name} has inconsistent length and will be skipped")
+                
+                if valid_columns:
+                    st.session_state.additional_columns = valid_columns
             
             return embeddings, texts, None
     except Exception as e:
@@ -106,6 +124,10 @@ def main():
     
     # Handle file selection based on user choice
     if option == "Usar embeddings existentes":
+        # Clear session state when switching to existing embeddings
+        if hasattr(st.session_state, 'additional_columns'):
+            del st.session_state.additional_columns
+            
         st.subheader("Selecionar Embeddings Salvos")
         selected_embedding = st.selectbox(
             "Escolha os embeddings salvos:",
@@ -115,6 +137,10 @@ def main():
         if selected_embedding:
             embeddings, texts, _ = handle_existing_file(saved_embeddings[selected_embedding])
     else:
+        # Clear session state when switching to new file
+        if hasattr(st.session_state, 'additional_columns'):
+            del st.session_state.additional_columns
+            
         st.subheader("Carregar Novo Arquivo")
         uploaded_file = st.file_uploader("Escolha um arquivo CSV", type="csv")
         if uploaded_file:
@@ -154,12 +180,16 @@ def main():
         # Add additional columns if available
         if hasattr(st.session_state, 'additional_columns'):
             for col_name, col_data in st.session_state.additional_columns.items():
-                plot_df[col_name] = col_data
-                # Format additional columns for tooltip
-                if isinstance(col_data[0], (int, float)):
-                    plot_df[f"Tooltip_{col_name}"] = [f"{col_name}: {val:.2f}" for val in col_data]
+                # Ensure col_data has the same length as plot_df
+                if len(col_data) == len(plot_df):
+                    plot_df[col_name] = col_data
+                    # Format additional columns for tooltip
+                    if isinstance(col_data[0], (int, float)):
+                        plot_df[f"Tooltip_{col_name}"] = [f"{col_name}: {val:.2f}" for val in col_data]
+                    else:
+                        plot_df[f"Tooltip_{col_name}"] = [f"{col_name}: {str(val)}" for val in col_data]
                 else:
-                    plot_df[f"Tooltip_{col_name}"] = [f"{col_name}: {str(val)}" for val in col_data]
+                    st.warning(f"Column {col_name} has different length than the main data and will be skipped.")
         
         # Create plot
         st.subheader("Visualização")
