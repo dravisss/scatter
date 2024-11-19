@@ -39,8 +39,12 @@ def handle_new_file(uploaded_file):
             st.error("File must have at least 2 columns")
             return None, None, None
         
-        # Generate embeddings
-        texts = df.iloc[:, 0].astype(str) + " | " + df.iloc[:, 1].astype(str)
+        # Store the raw text columns
+        text_col1 = df.iloc[:, 0].astype(str)
+        text_col2 = df.iloc[:, 1].astype(str)
+        
+        # Generate embeddings using concatenated text
+        texts = text_col1 + " | " + text_col2
         with st.spinner("Generating embeddings..."):
             embeddings = get_embeddings(texts.tolist())
             if embeddings is None:
@@ -51,6 +55,19 @@ def handle_new_file(uploaded_file):
             if save_path:
                 st.success(f"Embeddings saved successfully!")
         
+        # Store original columns in session state
+        st.session_state.text_columns = {
+            'col1': text_col1.tolist(),
+            'col2': text_col2.tolist()
+        }
+        
+        # Store additional columns
+        if len(df.columns) > 2:
+            st.session_state.additional_columns = {
+                col: df[col].fillna('').astype(str).tolist() 
+                for col in df.columns[2:]
+            }
+        
         return embeddings, texts, df
     except Exception as e:
         st.error(f"Error processing file: {str(e)}")
@@ -59,42 +76,37 @@ def handle_new_file(uploaded_file):
 def handle_existing_file(filepath):
     """Load and process existing embeddings."""
     try:
-        with st.spinner("Loading saved embeddings..."):
-            result = load_embeddings(filepath)
-            if result is None:
-                return None, None, None
+        # Clear session state
+        if hasattr(st.session_state, 'additional_columns'):
+            del st.session_state.additional_columns
+        if hasattr(st.session_state, 'text_columns'):
+            del st.session_state.text_columns
             
-            embeddings, columns_data, column_names = result
+        # Load embeddings
+        result = load_embeddings(filepath)
+        if result is None:
+            return None, None, None
             
-            # Ensure we have at least two columns
-            if len(columns_data) < 2:
-                st.error("Invalid data format: need at least two columns")
-                return None, None, None
-            
-            texts = [f"{str(c1)} | {str(c2)}" for c1, c2 in zip(columns_data[0], columns_data[1])]
-            
-            # Create info message about the data
-            col_info = [f"{column_names[0]} and {column_names[1]} (used for embeddings)"]
-            if len(column_names) > 2:
-                additional_cols = ", ".join(column_names[2:])
-                col_info.append(f"Additional columns: {additional_cols}")
-            st.info("\n".join(col_info))
-            
-            # Store additional columns in session state
-            if len(column_names) > 2:
-                # Validate lengths before storing
-                base_length = len(columns_data[0])
-                valid_columns = {}
-                for name, data in zip(column_names[2:], columns_data[2:]):
-                    if len(data) == base_length:
-                        valid_columns[name] = data
-                    else:
-                        st.warning(f"Column {name} has inconsistent length and will be skipped")
-                
-                if valid_columns:
-                    st.session_state.additional_columns = valid_columns
-            
-            return embeddings, texts, None
+        embeddings, columns_data, column_names = result
+        
+        # Store original text columns
+        st.session_state.text_columns = {
+            'col1': columns_data[0],
+            'col2': columns_data[1],
+            'col1_name': column_names[0],
+            'col2_name': column_names[1]
+        }
+        
+        # Create display text
+        texts = [f"{str(col1)} | {str(col2)}" for col1, col2 in zip(columns_data[0], columns_data[1])]
+        
+        # Store additional columns
+        if len(columns_data) > 2:
+            st.session_state.additional_columns = {
+                name: data for name, data in zip(column_names[2:], columns_data[2:])
+            }
+        
+        return embeddings, texts, None
     except Exception as e:
         st.error(f"Error loading embeddings: {str(e)}")
         return None, None, None
@@ -175,7 +187,16 @@ def main():
         plot_df["Text"] = texts
         
         # Format text for tooltip with line breaks
-        plot_df["Tooltip_Text"] = plot_df["Text"].apply(lambda x: f"<br>".join(textwrap.wrap(x, width=50)))
+        def clean_text_for_tooltip(idx):
+            if hasattr(st.session_state, 'text_columns'):
+                col1 = st.session_state.text_columns['col1'][idx]
+                col2 = st.session_state.text_columns['col2'][idx]
+                col1_name = st.session_state.text_columns.get('col1_name', 'Column 1')
+                col2_name = st.session_state.text_columns.get('col2_name', 'Column 2')
+                return f"<b>{col1_name}:</b> {col1}<br><b>{col2_name}:</b> {col2}"
+            return plot_df["Text"].iloc[idx]
+
+        plot_df["Tooltip_Text"] = [clean_text_for_tooltip(i) for i in range(len(plot_df))]
         
         # Add additional columns if available
         tooltip_columns = []
@@ -201,11 +222,10 @@ def main():
         point_size = st.slider("Tamanho dos pontos", 1, 20, 5)
         
         # Prepare hover data template
-        hover_template = """
-        <b>Texto:</b><br>%{customdata[0]}
-        <br>
-        <b>Cluster:</b> %{customdata[1]}
-        """
+        hover_template = (
+            "<b>Texto:</b><br>%{customdata[0]}<br><br>"
+            "<b>Cluster:</b> %{customdata[1]}"
+        )
         
         # Add additional metadata to hover template if available
         if tooltip_columns:
