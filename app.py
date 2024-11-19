@@ -201,19 +201,19 @@ def main():
             "%{customdata[1]}"
         )
         
-        # Add additional metadata to hover template if available
-        if hasattr(st.session_state, 'additional_columns'):
-            tooltip_columns = list(st.session_state.additional_columns.keys())
-            for i, col_name in enumerate(tooltip_columns):
-                hover_template += f"<br><b>{col_name}:</b> %{{customdata[{i+4}]}}"
-                col_data = plot_df[col_name].tolist()
-                customdata = np.c_[np.array([
-                    [wrap_text(text) for text in st.session_state.text_columns['col1']],  # Column 1 values
-                    [wrap_text(text) for text in st.session_state.text_columns['col2']],  # Column 2 values
-                    [st.session_state.text_columns.get('col1_name', 'Column 1')] * len(plot_df),  # Column 1 name
-                    [st.session_state.text_columns.get('col2_name', 'Column 2')] * len(plot_df),  # Column 2 name
-                ]).T, col_data]
-            customdata = np.c_[customdata, plot_df[tooltip_columns].values]
+        # Prepare custom data for hover
+        if hasattr(st.session_state, 'text_columns'):
+            col1_data = [wrap_text(text) for text in st.session_state.text_columns['col1']]
+            col2_data = [wrap_text(text) for text in st.session_state.text_columns['col2']]
+            col1_name = st.session_state.text_columns.get('col1_name', 'Column 1')
+            col2_name = st.session_state.text_columns.get('col2_name', 'Column 2')
+            
+            customdata = np.array([
+                col1_data,  # Column 1 values
+                col2_data,  # Column 2 values
+                [col1_name] * len(plot_df),  # Column 1 name
+                [col2_name] * len(plot_df),  # Column 2 name
+            ]).T
         else:
             # Fallback to using the concatenated text
             texts_array = texts
@@ -224,6 +224,12 @@ def main():
                 ["Column 1"] * len(plot_df),
                 ["Column 2"] * len(plot_df)
             ]).T
+
+        # Add additional metadata to hover template if available
+        if hasattr(st.session_state, 'additional_columns'):
+            for i, (col_name, col_data) in enumerate(st.session_state.additional_columns.items()):
+                hover_template += f"<br><b>{col_name}:</b> %{{customdata[{i+4}]}}"
+                customdata = np.c_[customdata, col_data]
         
         hover_template += "<extra></extra>"
         
