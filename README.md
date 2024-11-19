@@ -4,7 +4,7 @@ This Streamlit application processes CSV files to create interactive visualizati
 
 ## Features
 - Upload CSV files
-- Generate embeddings using OpenAI's text-embedding-ada-002 model
+- Generate embeddings using OpenAI's text-embedding-3-small model (with batch processing)
 - Reduce dimensionality with UMAP
 - Cluster data points using HDBSCAN
 - Interactive scatter plot visualization with Plotly

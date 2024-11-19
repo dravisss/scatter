@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import openai
-from dotenv import load_dotenv
 import os
 import json
 from datetime import datetime
@@ -11,10 +9,6 @@ import glob
 from utils.embeddings import get_embeddings, save_embeddings, load_embeddings, get_saved_embeddings
 from utils.visualization import reduce_dimensionality, cluster_data, get_visualization_params
 import textwrap
-
-# Load environment variables
-load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Constants
 EMBEDDINGS_DIR = "embeddings"

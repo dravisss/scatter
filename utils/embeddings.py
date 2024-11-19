@@ -1,19 +1,29 @@
 import os
 import json
 import glob
-import openai
 import streamlit as st
 import numpy as np
 from datetime import datetime
+from .config import client
 
 def get_embeddings(texts):
-    """Generate embeddings using OpenAI's API."""
+    """Generate embeddings using OpenAI's API with batch processing."""
     try:
-        response = openai.Embedding.create(
-            input=texts,
-            model="text-embedding-ada-002"
-        )
-        return np.array([embedding["embedding"] for embedding in response["data"]])
+        # Initialize list to store all embeddings
+        all_embeddings = []
+        
+        # Process in batches of 100 texts to stay well within the 8000 token limit
+        batch_size = 100
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i:i + batch_size]
+            response = client.embeddings.create(
+                input=batch_texts,
+                model="text-embedding-3-small"
+            )
+            batch_embeddings = [embedding.embedding for embedding in response.data]
+            all_embeddings.extend(batch_embeddings)
+        
+        return np.array(all_embeddings)
     except Exception as e:
         st.error(f"Error generating embeddings: {str(e)}")
         return None
