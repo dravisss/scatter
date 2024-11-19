@@ -3,3 +3,10 @@ __pycache__/
 *.pyc
 embeddings/
 .DS_Store
+debug.log
+.vscode/
+desktop.ini
+precomputed/
+frontend/
+backend/
+*.log
