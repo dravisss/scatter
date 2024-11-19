@@ -163,6 +163,9 @@ def main():
         # Get visualization parameters
         params = get_visualization_params()
         
+        # Create index mapping to track original order
+        original_indices = np.arange(len(embeddings))
+        
         # Reduce dimensionality
         with st.spinner("Reduzindo dimensionalidade..."):
             umap_embeddings = reduce_dimensionality(
@@ -182,68 +185,69 @@ def main():
         outlier_percentage = (n_outliers / len(cluster_labels)) * 100
         
         # Prepare data for plotting
-        plot_df = pd.DataFrame(umap_embeddings, columns=[f"UMAP{i+1}" for i in range(umap_embeddings.shape[1])])
-        plot_df["Cluster"] = [f"Cluster {l}" if l >= 0 else "Outliers" for l in cluster_labels]
-        plot_df["Text"] = texts
+        plot_df = pd.DataFrame({
+            **{f"UMAP{i+1}": umap_embeddings[:, i] for i in range(umap_embeddings.shape[1])},
+            "Cluster": [f"Cluster {l}" if l >= 0 else "Outliers" for l in cluster_labels],
+            "Text": texts,
+            "original_index": original_indices
+        })
         
-        # Format text for tooltip with line breaks
-        def clean_text_for_tooltip(idx):
-            if hasattr(st.session_state, 'text_columns'):
-                col1 = st.session_state.text_columns['col1'][idx]
-                col2 = st.session_state.text_columns['col2'][idx]
-                col1_name = st.session_state.text_columns.get('col1_name', 'Column 1')
-                col2_name = st.session_state.text_columns.get('col2_name', 'Column 2')
-                return f"<b>{col1_name}:</b> {col1}<br><b>{col2_name}:</b> {col2}"
-            return plot_df["Text"].iloc[idx]
-
-        plot_df["Tooltip_Text"] = [clean_text_for_tooltip(i) for i in range(len(plot_df))]
+        # Format text for tooltip
+        hover_template = (
+            "<b>%{customdata[2]}</b><br>"  # Column 1 name
+            "%{customdata[0]}<br><br>"     # Column 2 name
+            "<b>%{customdata[3]}</b><br>"  # Column 1 value
+            "%{customdata[1]}"             # Column 2 value
+        )
         
         # Add additional columns if available
         tooltip_columns = []
         if hasattr(st.session_state, 'additional_columns'):
             for col_name, col_data in st.session_state.additional_columns.items():
-                # Ensure col_data has the same length as plot_df
                 if len(col_data) == len(plot_df):
                     plot_df[col_name] = col_data
-                    # Format additional columns for tooltip
-                    if isinstance(col_data[0], (int, float)):
-                        tooltip_col = f"Tooltip_{col_name}"
-                        plot_df[tooltip_col] = [f"{col_name}: {val:.2f}" for val in col_data]
-                        tooltip_columns.append(tooltip_col)
-                    else:
-                        tooltip_col = f"Tooltip_{col_name}"
-                        plot_df[tooltip_col] = [f"{col_name}: {str(val)}" for val in col_data]
-                        tooltip_columns.append(tooltip_col)
-                else:
-                    st.warning(f"Column {col_name} has different length than the main data and will be skipped.")
+                    tooltip_columns.append(col_name)
         
         # Create plot
         st.subheader("Visualização")
         point_size = st.slider("Tamanho dos pontos", 1, 20, 5)
         
-        # Prepare hover data template
-        hover_template = (
-            "<b>Texto:</b><br>%{customdata[0]}<br><br>"
-            "<b>Cluster:</b> %{customdata[1]}"
-        )
+        # Prepare custom data for hover using original indices
+        if hasattr(st.session_state, 'text_columns'):
+            col1_data = np.array(st.session_state.text_columns['col1'])[plot_df['original_index']]
+            col2_data = np.array(st.session_state.text_columns['col2'])[plot_df['original_index']]
+            col1_name = st.session_state.text_columns.get('col1_name', 'Column 1')
+            col2_name = st.session_state.text_columns.get('col2_name', 'Column 2')
+            
+            customdata = np.array([
+                col1_data,  # Column 1 values
+                col2_data,  # Column 2 values
+                [col1_name] * len(plot_df),  # Column 1 name
+                [col2_name] * len(plot_df),  # Column 2 name
+            ]).T
+        else:
+            # Fallback to using the concatenated text
+            texts_array = np.array(texts)[plot_df['original_index']]
+            parts = [text.split(" | ", 1) for text in texts_array]
+            customdata = np.array([
+                [p[0] for p in parts],  # First part
+                [p[1] if len(p) > 1 else "" for p in parts],  # Second part
+                ["Column 1"] * len(plot_df),
+                ["Column 2"] * len(plot_df)
+            ]).T
         
         # Add additional metadata to hover template if available
         if tooltip_columns:
-            for i, col_name in enumerate(tooltip_columns, start=2):
-                hover_template += f"<br>%{{customdata[{i}]}}"
+            for i, col_name in enumerate(tooltip_columns):
+                hover_template += f"<br><b>{col_name}:</b> %{{customdata[{i+4}]}}"
+                col_data = np.array(plot_df[col_name])[plot_df['original_index']].tolist()
+                customdata = np.c_[customdata, col_data]
         
         hover_template += "<extra></extra>"
         
         # Calculate figure dimensions for 16:9 aspect ratio
         width = 1200
         height = int(width * 9/16)
-        
-        # Prepare custom data for hover
-        customdata = [plot_df["Tooltip_Text"].tolist(), plot_df["Cluster"].tolist()]
-        if tooltip_columns:
-            for col_name in tooltip_columns:
-                customdata.append(plot_df[col_name].tolist())
-        customdata = np.array(customdata).T  # Transpose to match Plotly's expected format
         
         if umap_embeddings.shape[1] == 3:
             fig = px.scatter_3d(
@@ -253,7 +257,8 @@ def main():
                 z="UMAP3",
                 color="Cluster",
                 title="Visualização UMAP 3D",
-                size=[point_size] * len(plot_df)
+                size=[point_size] * len(plot_df),
+                custom_data=customdata
             )
         else:
             fig = px.scatter(
@@ -262,7 +267,8 @@ def main():
                 y="UMAP2",
                 color="Cluster",
                 title="Visualização UMAP 2D",
-                size=[point_size] * len(plot_df)
+                size=[point_size] * len(plot_df),
+                custom_data=customdata
             )
         
         # Update layout and traces
@@ -276,13 +282,12 @@ def main():
                 y=0.99,
                 xanchor="left",
                 x=0.01
-            )
+            ),
+            hovermode='closest'
         )
         
         # Update hover template for all traces
-        for trace in fig.data:
-            trace.customdata = customdata
-            trace.hovertemplate = hover_template
+        fig.update_traces(hovertemplate=hover_template)
         
         st.plotly_chart(fig, use_container_width=True)
         st.write(f"Porcentagem de outliers: {outlier_percentage:.2f}%")
