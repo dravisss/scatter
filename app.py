@@ -288,6 +288,92 @@ def main():
         # Display the plot using Streamlit's native bokeh_chart
         st.bokeh_chart(plot, use_container_width=True)
         
+        # Show cluster information in an interactive way
+        st.subheader("Clusters Identificados")
+        
+        # Create columns for better layout
+        stats_col1, stats_col2 = st.columns([2, 1])
+        
+        with stats_col1:
+            # Create tabs for different views
+            cluster_tab, stats_tab = st.tabs(["Lista de Clusters", "Estatísticas"])
+            
+            with cluster_tab:
+                # Sort clusters by size (excluding outliers)
+                cluster_sizes = {}
+                for label in set(cluster_labels):
+                    if label != -1:
+                        size = sum(1 for l in cluster_labels if l == label)
+                        cluster_sizes[label] = size
+                
+                sorted_clusters = sorted(cluster_sizes.items(), key=lambda x: x[1], reverse=True)
+                
+                # Create interactive cluster list
+                selected_clusters = []
+                for label, size in sorted_clusters:
+                    cluster_name = cluster_names.get(label, f"Cluster {label}")
+                    membership = cluster_memberships.get(label, 0)
+                    
+                    # Create expander for each cluster
+                    with st.expander(f"{cluster_name} ({size} narrativas, {membership:.1f}%)"):
+                        # Show sample texts from this cluster
+                        st.write("**Exemplos de narrativas neste cluster:**")
+                        cluster_mask = cluster_labels == label
+                        sample_texts = df[cluster_mask][df.columns[0]].head(3)
+                        for i, text in enumerate(sample_texts, 1):
+                            st.write(f"{i}. {text}")
+                        
+                        # Add filter button
+                        if st.button(f"Filtrar Cluster {label}", key=f"filter_{label}"):
+                            selected_clusters.append(label)
+                
+                # If clusters are selected, update the visualization
+                if selected_clusters:
+                    # Update the plot with only selected clusters
+                    filtered_mask = np.isin(cluster_labels, selected_clusters)
+                    filtered_embeddings = umap_embeddings[filtered_mask]
+                    filtered_colors = [c for i, c in enumerate(colors) if cluster_labels[i] in selected_clusters]
+                    filtered_df = df[filtered_mask].copy()
+                    filtered_labels = cluster_labels[filtered_mask]
+                    filtered_info = [info for i, info in enumerate(cluster_info) if cluster_labels[i] in selected_clusters]
+                    
+                    filtered_plot = create_bokeh_scatter(
+                        umap_embeddings=filtered_embeddings,
+                        colors=filtered_colors,
+                        df=filtered_df,
+                        text_col=df.columns[0],
+                        desc_col=df.columns[1] if len(df.columns) > 1 else None,
+                        cluster_labels=filtered_labels,
+                        cluster_names=cluster_names,
+                        cluster_info=filtered_info,
+                        is_3d=params['umap']['n_components'] == 3
+                    )
+                    
+                    st.bokeh_chart(filtered_plot, use_container_width=True)
+                    
+                    # Add button to clear filters
+                    if st.button("Limpar Filtros"):
+                        selected_clusters.clear()
+            
+            with stats_tab:
+                # Show statistics
+                n_outliers = sum(1 for label in cluster_labels if label == -1)
+                outlier_percentage = (n_outliers / len(cluster_labels)) * 100
+                st.write(f"Porcentagem de outliers: {outlier_percentage:.2f}%")
+                n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
+                st.write(f"Número de clusters: {n_clusters}")
+                
+                # Show cluster distribution
+                st.write("**Distribuição dos Clusters:**")
+                for label, size in sorted_clusters:
+                    membership = cluster_memberships.get(label, 0)
+                    name = cluster_names.get(label, f"Cluster {label}")
+                    st.write(f"- {name}: {size} narrativas ({membership:.1f}%)")
+        
+        with stats_col2:
+            # Additional statistics or visualizations could go here
+            pass
+        
         # Show statistics
         n_outliers = sum(1 for label in cluster_labels if label == -1)
         outlier_percentage = (n_outliers / len(cluster_labels)) * 100
