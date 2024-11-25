@@ -46,7 +46,7 @@ Responda APENAS com o nome, sem explicações adicionais."""
             # Get response from Claude
             message = client.messages.create(
                 model="claude-3-haiku-20240307",
-                max_tokens=8000,
+                max_tokens=4096,
                 temperature=0,
                 system="Você é um assistente especializado em análise de texto e categorização. Gere nomes concisos e precisos para grupos de texto relacionados.",
                 messages=[{"role": "user", "content": prompt}]

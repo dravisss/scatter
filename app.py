@@ -233,17 +233,38 @@ def main():
         umap_embeddings, cluster_labels = process_embeddings(embeddings, params)
         
         # Generate cluster names using Claude
+        cluster_names = {}  # Initialize before try block
         with st.spinner("Gerando nomes para os clusters..."):
             try:
-                cluster_names = generate_cluster_names(df, cluster_labels)
-                st.success("Nomes dos clusters gerados com sucesso!")
+                generated_names = generate_cluster_names(df, cluster_labels)
+                if generated_names is not None:
+                    cluster_names = generated_names
+                    st.success("Nomes dos clusters gerados com sucesso!")
+                else:
+                    st.warning("Não foi possível gerar nomes para os clusters. Usando números como identificadores.")
             except Exception as e:
                 st.error(f"Erro ao gerar nomes dos clusters: {str(e)}")
-                cluster_names = None
         
         # Calculate outlier percentage
         n_outliers = sum(1 for label in cluster_labels if label == -1)
         outlier_percentage = (n_outliers / len(cluster_labels)) * 100
+        
+        # Calculate cluster membership probabilities
+        def calculate_cluster_membership(labels):
+            cluster_counts = {}
+            total_points = len(labels)
+            for label in labels:
+                if label != -1:  # Exclude outliers
+                    cluster_counts[label] = cluster_counts.get(label, 0) + 1
+            
+            # Calculate percentages
+            membership_probs = {}
+            for cluster, count in cluster_counts.items():
+                membership_probs[cluster] = (count / total_points) * 100
+            return membership_probs
+
+        # Calculate membership probabilities
+        cluster_memberships = calculate_cluster_membership(cluster_labels)
         
         # Generate colors and hover texts
         colors, hover_texts = get_cluster_colors(cluster_labels, cluster_names)
@@ -258,56 +279,105 @@ def main():
         
         # Create hover texts with all available information
         def create_hover_text(hover, text, desc=None, cluster_label=None):
-            hover_parts = [hover]  # Start with cluster name
+            hover_parts = []
             
-            # Add title
+            # Add title with wider text wrapping
             hover_parts.append(f"<b>Título:</b><br>{textwrap.fill(text, width=50)}")
             
             # Add description if available
             if desc is not None:
-                hover_parts.append(f"<b>Descrição:</b><br>{textwrap.fill(desc, width=50)}")
+                hover_parts.append(f"<b>Narrativa:</b><br>{textwrap.fill(desc, width=50)}")
             
             # Add cluster information
             if cluster_label is not None:
                 if cluster_label == -1:
                     hover_parts.append("<b>Status:</b> Outlier")
                 else:
-                    hover_parts.append(f"<b>Cluster:</b> {cluster_label}")
+                    membership = cluster_memberships.get(cluster_label, 0)
+                    cluster_label_text = f'Cluster {cluster_label}'
+                    if cluster_names and cluster_label in cluster_names:
+                        cluster_label_text += f': {cluster_names[cluster_label]}'
+                    hover_parts.append(f"<b>Cluster:</b> {cluster_label_text}")
+                    hover_parts.append(f"<b>Pertencimento:</b> {membership:.1f}%")
             
             return "<br><br>".join(hover_parts)
         
         # Create scatter plot
         if params["umap"]["n_components"] == 2:
-            fig = go.Figure(data=go.Scatter(
-                x=umap_embeddings[:, 0],
-                y=umap_embeddings[:, 1],
-                mode='markers',
-                marker=dict(
-                    color=colors,
-                    size=8,
-                    opacity=0.6
+            # Create figure with sidebar for cluster selection
+            fig = go.Figure()
+            
+            # Add trace for each cluster
+            unique_clusters = sorted(list(set(cluster_labels)))
+            for cluster in unique_clusters:
+                mask = cluster_labels == cluster
+                cluster_name = f"Cluster {cluster}" if cluster != -1 else "Outliers"
+                
+                # Convert numpy arrays to lists to avoid serialization issues
+                x_data = umap_embeddings[mask, 0].tolist()
+                y_data = umap_embeddings[mask, 1].tolist()
+                marker_colors = [c for i, c in enumerate(colors) if cluster_labels[i] == cluster]
+                
+                # Get indices where cluster_labels matches current cluster
+                cluster_indices = np.where(cluster_labels == cluster)[0]
+                hover_texts = [create_hover_text(None, df[text_col].iloc[i], 
+                                               df[desc_col].iloc[i] if desc_col else None,
+                                               cluster_labels[i])
+                             for i in cluster_indices]
+                
+                fig.add_trace(go.Scatter(
+                    x=x_data,
+                    y=y_data,
+                    mode='markers',
+                    marker=dict(
+                        color=marker_colors,
+                        size=8,
+                        opacity=0.6
+                    ),
+                    text=hover_texts,
+                    hoverinfo='text',
+                    name=cluster_name,
+                    showlegend=True
+                ))
+            
+            # Update layout for better legend placement and hover style
+            fig.update_layout(
+                showlegend=True,
+                legend=dict(
+                    yanchor="top",
+                    y=0.99,
+                    xanchor="left",
+                    x=1.02,
+                    bgcolor="white",
+                    bordercolor="gray",
+                    borderwidth=1
                 ),
-                text=[create_hover_text(hover, text, 
-                                      df[desc_col].iloc[i] if desc_col else None,
-                                      cluster_labels[i])
-                      for i, (hover, text) in enumerate(zip(hover_texts, df[text_col]))],
-                hoverinfo='text'
-            ))
+                margin=dict(r=150),  # Add right margin for legend
+                plot_bgcolor='white',  # White background
+                paper_bgcolor='white',  # White paper background
+                hoverlabel=dict(
+                    bgcolor="white",
+                    font_size=12,
+                    font_family="Arial",
+                    bordercolor="gray"
+                )
+            )
         else:
+            # For 3D plot, convert numpy arrays to lists
             fig = go.Figure(data=go.Scatter3d(
-                x=umap_embeddings[:, 0],
-                y=umap_embeddings[:, 1],
-                z=umap_embeddings[:, 2],
+                x=umap_embeddings[:, 0].tolist(),
+                y=umap_embeddings[:, 1].tolist(),
+                z=umap_embeddings[:, 2].tolist(),
                 mode='markers',
                 marker=dict(
                     color=colors,
                     size=8,
                     opacity=0.6
                 ),
-                text=[create_hover_text(hover, text, 
+                text=[create_hover_text(None, df[text_col].iloc[i], 
                                       df[desc_col].iloc[i] if desc_col else None,
                                       cluster_labels[i])
-                      for i, (hover, text) in enumerate(zip(hover_texts, df[text_col]))],
+                      for i in range(len(cluster_labels))],
                 hoverinfo='text'
             ))
         
