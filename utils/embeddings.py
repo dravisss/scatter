@@ -23,7 +23,8 @@ def get_embeddings(texts):
             batch_embeddings = [embedding.embedding for embedding in response.data]
             all_embeddings.extend(batch_embeddings)
         
-        return np.array(all_embeddings)
+        # Convert to float64 numpy array
+        return np.array(all_embeddings, dtype=np.float64)
     except Exception as e:
         st.error(f"Error generating embeddings: {str(e)}")
         return None
@@ -84,7 +85,10 @@ def load_embeddings(filepath):
             columns_data.append(data[f"column_{i+1}_data"])
             column_names.append(data[f"column_{i+1}_name"])
         
-        return (np.array(data["embeddings"]), 
+        # Ensure embeddings are float64
+        embeddings = np.array(data["embeddings"], dtype=np.float64)
+        
+        return (embeddings, 
                 columns_data,
                 column_names)
     except json.JSONDecodeError as e:
