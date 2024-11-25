@@ -10,9 +10,11 @@ import json
 from datetime import datetime
 import glob
 from utils.embeddings import get_embeddings, save_embeddings, load_embeddings, get_saved_embeddings
-from utils.visualization import reduce_dimensionality, cluster_data, get_visualization_params, get_cluster_colors, create_bokeh_scatter
+from utils.visualization import reduce_dimensionality, cluster_data, get_visualization_params, get_cluster_colors, create_bokeh_scatter, create_altair_scatter
 from utils.cluster_naming import generate_cluster_names
 import textwrap
+from bokeh.models import BooleanFilter, CDSView
+import altair as alt
 
 # Constants
 EMBEDDINGS_DIR = "embeddings"
@@ -173,13 +175,9 @@ def process_embeddings(embeddings, params):
     return umap_embeddings, cluster_labels
 
 def main():
-    # Page config
-    st.set_page_config(page_title="Visualização de Dados Interativa", layout="wide")
-    
-    # Title and description
-    st.title("Visualização de Dados Interativa")
+    st.title("Visualizador de Narrativas")
     st.write("Gere embeddings, agrupe dados e crie visualizações interativas a partir dos seus arquivos CSV.")
-    
+
     # First, let user choose between new file or existing embeddings
     saved_embeddings = get_saved_embeddings(EMBEDDINGS_DIR)
     if saved_embeddings:
@@ -191,11 +189,7 @@ def main():
     else:
         option = "Carregar novo arquivo"
         st.info("Nenhum embedding encontrado. Por favor, carregue um novo arquivo.")
-    
-    embeddings = None
-    texts = None
-    df = None
-    
+
     # Handle file selection based on user choice
     if option == "Usar embeddings existentes":
         # Clear session state when switching to existing embeddings
@@ -210,29 +204,33 @@ def main():
         )
         if selected_embedding:
             embeddings, texts, df = handle_existing_file(saved_embeddings[selected_embedding])
+            st.session_state.embeddings = embeddings
+            st.session_state.df = df
     else:
         # Clear session state when switching to new file
         if hasattr(st.session_state, 'additional_columns'):
             del st.session_state.additional_columns
             
         st.subheader("Carregar Novo Arquivo")
-        uploaded_file = st.file_uploader("Escolha um arquivo CSV", type="csv")
+        uploaded_file = st.file_uploader("Escolha um arquivo CSV", type=['csv'])
         if uploaded_file:
             embeddings, texts, df = handle_new_file(uploaded_file)
-    
+            st.session_state.embeddings = embeddings
+            st.session_state.df = df
+
     # Process and visualize data if we have valid embeddings
-    if embeddings is not None and texts is not None:
+    if 'embeddings' in st.session_state and 'df' in st.session_state:
         # Get visualization parameters
         params = get_visualization_params()
         
         # Process embeddings (with caching)
-        umap_embeddings, cluster_labels = process_embeddings(embeddings, params)
+        umap_embeddings, cluster_labels = process_embeddings(st.session_state.embeddings, params)
         
         # Generate cluster names using Claude
-        cluster_names = {}  # Initialize before try block
+        cluster_names = {}
         with st.spinner("Gerando nomes para os clusters..."):
             try:
-                generated_names = generate_cluster_names(df, cluster_labels)
+                generated_names = generate_cluster_names(st.session_state.df, cluster_labels)
                 if generated_names is not None:
                     cluster_names = generated_names
                     st.success("Nomes dos clusters gerados com sucesso!")
@@ -240,151 +238,71 @@ def main():
                     st.warning("Não foi possível gerar nomes para os clusters. Usando números como identificadores.")
             except Exception as e:
                 st.error(f"Erro ao gerar nomes dos clusters: {str(e)}")
-        
-        # Calculate cluster membership probabilities
-        def calculate_cluster_membership(labels):
-            cluster_counts = {}
-            total_points = len(labels)
-            for label in labels:
-                if label != -1:  # Exclude outliers
-                    cluster_counts[label] = cluster_counts.get(label, 0) + 1
-            
-            # Calculate percentages
-            membership_probs = {}
-            for cluster, count in cluster_counts.items():
-                membership_probs[cluster] = (count / total_points) * 100
-            return membership_probs
 
-        # Calculate membership probabilities
-        cluster_memberships = calculate_cluster_membership(cluster_labels)
+        # Toggle between visualizations
+        viz_type = st.radio("Escolha o tipo de visualização:", ["Interativa (Altair)", "Bokeh"])
         
-        # Prepare cluster information for tooltips
-        cluster_info = []
-        for i, label in enumerate(cluster_labels):
-            if label == -1:
-                info = "Outlier"
-            else:
-                membership = cluster_memberships.get(label, 0)
-                name = cluster_names.get(label, f"Cluster {label}")
-                info = f"{name}<br>Pertencimento: {membership:.1f}%"
-            cluster_info.append(info)
-        
-        # Generate colors
-        colors, _ = get_cluster_colors(cluster_labels, cluster_names)
-        
-        # Create Bokeh plot
-        plot = create_bokeh_scatter(
-            umap_embeddings=umap_embeddings,
-            colors=colors,
-            df=df,
-            text_col=df.columns[0],  # primeira coluna
-            desc_col=df.columns[1] if len(df.columns) > 1 else None,  # segunda coluna se existir
-            cluster_labels=cluster_labels,
-            cluster_names=cluster_names,
-            cluster_info=cluster_info,  # Adicionando informações do cluster
-            is_3d=params['umap']['n_components'] == 3
-        )
-        
-        # Display the plot using Streamlit's native bokeh_chart
-        st.bokeh_chart(plot, use_container_width=True)
-        
-        # Show cluster information in an interactive way
-        st.subheader("Clusters Identificados")
-        
-        # Create columns for better layout
-        stats_col1, stats_col2 = st.columns([2, 1])
-        
-        with stats_col1:
-            # Create tabs for different views
-            cluster_tab, stats_tab = st.tabs(["Lista de Clusters", "Estatísticas"])
+        if viz_type == "Interativa (Altair)":
+            # Create and display Altair plot
+            chart = create_altair_scatter(
+                umap_embeddings,
+                st.session_state.df,
+                st.session_state.df.columns[0],
+                st.session_state.df.columns[1] if len(st.session_state.df.columns) > 1 else None,
+                cluster_labels,
+                cluster_names
+            )
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            # Calculate cluster membership probabilities
+            def calculate_cluster_membership(labels):
+                cluster_counts = {}
+                total_points = len(labels)
+                for label in labels:
+                    if label != -1:  # Exclude outliers
+                        cluster_counts[label] = cluster_counts.get(label, 0) + 1
+                
+                # Calculate percentages
+                membership_probs = {}
+                for cluster, count in cluster_counts.items():
+                    membership_probs[cluster] = (count / total_points) * 100
+                return membership_probs
+
+            # Calculate membership probabilities
+            cluster_memberships = calculate_cluster_membership(cluster_labels)
             
-            with cluster_tab:
-                # Sort clusters by size (excluding outliers)
-                cluster_sizes = {}
-                for label in set(cluster_labels):
-                    if label != -1:
-                        size = sum(1 for l in cluster_labels if l == label)
-                        cluster_sizes[label] = size
-                
-                sorted_clusters = sorted(cluster_sizes.items(), key=lambda x: x[1], reverse=True)
-                
-                # Create interactive cluster list
-                selected_clusters = []
-                for label, size in sorted_clusters:
-                    cluster_name = cluster_names.get(label, f"Cluster {label}")
-                    membership = cluster_memberships.get(label, 0)
-                    
-                    # Create expander for each cluster
-                    with st.expander(f"{cluster_name} ({size} narrativas, {membership:.1f}%)"):
-                        # Show sample texts from this cluster
-                        st.write("**Exemplos de narrativas neste cluster:**")
-                        cluster_mask = cluster_labels == label
-                        sample_texts = df[cluster_mask][df.columns[0]].head(3)
-                        for i, text in enumerate(sample_texts, 1):
-                            st.write(f"{i}. {text}")
-                        
-                        # Add filter button
-                        if st.button(f"Filtrar Cluster {label}", key=f"filter_{label}"):
-                            selected_clusters.append(label)
-                
-                # If clusters are selected, update the visualization
-                if selected_clusters:
-                    # Update the plot with only selected clusters
-                    filtered_mask = np.isin(cluster_labels, selected_clusters)
-                    filtered_embeddings = umap_embeddings[filtered_mask]
-                    filtered_colors = [c for i, c in enumerate(colors) if cluster_labels[i] in selected_clusters]
-                    filtered_df = df[filtered_mask].copy()
-                    filtered_labels = cluster_labels[filtered_mask]
-                    filtered_info = [info for i, info in enumerate(cluster_info) if cluster_labels[i] in selected_clusters]
-                    
-                    filtered_plot = create_bokeh_scatter(
-                        umap_embeddings=filtered_embeddings,
-                        colors=filtered_colors,
-                        df=filtered_df,
-                        text_col=df.columns[0],
-                        desc_col=df.columns[1] if len(df.columns) > 1 else None,
-                        cluster_labels=filtered_labels,
-                        cluster_names=cluster_names,
-                        cluster_info=filtered_info,
-                        is_3d=params['umap']['n_components'] == 3
-                    )
-                    
-                    st.bokeh_chart(filtered_plot, use_container_width=True)
-                    
-                    # Add button to clear filters
-                    if st.button("Limpar Filtros"):
-                        selected_clusters.clear()
-            
-            with stats_tab:
-                # Show statistics
-                n_outliers = sum(1 for label in cluster_labels if label == -1)
-                outlier_percentage = (n_outliers / len(cluster_labels)) * 100
-                st.write(f"Porcentagem de outliers: {outlier_percentage:.2f}%")
-                n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
-                st.write(f"Número de clusters: {n_clusters}")
-                
-                # Show cluster distribution
-                st.write("**Distribuição dos Clusters:**")
-                for label, size in sorted_clusters:
+            # Prepare cluster information for tooltips
+            cluster_info = []
+            for i, label in enumerate(cluster_labels):
+                if label == -1:
+                    info = "Outlier"
+                else:
                     membership = cluster_memberships.get(label, 0)
                     name = cluster_names.get(label, f"Cluster {label}")
-                    st.write(f"- {name}: {size} narrativas ({membership:.1f}%)")
-        
-        with stats_col2:
-            # Additional statistics or visualizations could go here
-            pass
-        
-        # Show statistics
-        n_outliers = sum(1 for label in cluster_labels if label == -1)
-        outlier_percentage = (n_outliers / len(cluster_labels)) * 100
-        st.write(f"Porcentagem de outliers: {outlier_percentage:.2f}%")
-        n_clusters = len(set(cluster_labels)) - (1 if -1 in cluster_labels else 0)
-        st.write(f"Número de clusters: {n_clusters}")
-        
+                    info = f"{name}<br>Pertencimento: {membership:.1f}%"
+                cluster_info.append(info)
+            
+            # Generate colors
+            colors, _ = get_cluster_colors(cluster_labels, cluster_names)
+            
+            # Create Bokeh plot
+            plot, source, view = create_bokeh_scatter(
+                umap_embeddings=umap_embeddings,
+                colors=colors,
+                df=st.session_state.df,
+                text_col=st.session_state.df.columns[0],
+                desc_col=st.session_state.df.columns[1] if len(st.session_state.df.columns) > 1 else None,
+                cluster_labels=cluster_labels,
+                cluster_names=cluster_names,
+                cluster_info=cluster_info,
+                is_3d=params['umap']['n_components'] == 3
+            )
+            st.bokeh_chart(plot, use_container_width=True)
+
         # Add export functionality
         st.subheader("Exportar Resultados")
-        if df is not None:
-            export_results(df, umap_embeddings, cluster_labels)
+        if st.session_state.df is not None:
+            export_results(st.session_state.df, umap_embeddings, cluster_labels)
         else:
             st.warning("Dados originais não disponíveis para exportação.")
 

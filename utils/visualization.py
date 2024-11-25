@@ -6,7 +6,7 @@ import os
 import matplotlib.pyplot as plt
 from matplotlib.colors import rgb2hex
 from bokeh.plotting import figure
-from bokeh.models import ColumnDataSource, HoverTool
+from bokeh.models import ColumnDataSource, HoverTool, CustomJS, TapTool, CDSView, BooleanFilter, IndexFilter
 from bokeh.layouts import column
 import pandas as pd
 
@@ -75,8 +75,8 @@ def get_cluster_colors(cluster_labels, cluster_names=None):
 def create_bokeh_scatter(umap_embeddings, colors, df, text_col, desc_col, cluster_labels, cluster_names=None, cluster_info=None, is_3d=False):
     """Create an interactive Bokeh scatter plot."""
     from bokeh.plotting import figure
-    from bokeh.models import ColumnDataSource, HoverTool
-    
+    from bokeh.models import ColumnDataSource, HoverTool, CustomJS, CDSView, BooleanFilter, IndexFilter
+
     # Prepare data
     data = {
         'x': umap_embeddings[:, 0],
@@ -84,25 +84,31 @@ def create_bokeh_scatter(umap_embeddings, colors, df, text_col, desc_col, cluste
         'colors': colors,
         'text': df[text_col],
         'description': df[desc_col] if desc_col else [''] * len(df),
-        'cluster_info': cluster_info if cluster_info else [f'Cluster {label}' for label in cluster_labels]
+        'cluster_info': cluster_info if cluster_info else [f'Cluster {label}' for label in cluster_labels],
+        'cluster_label': cluster_labels,
+        'index': list(range(len(cluster_labels)))
     }
     if is_3d and umap_embeddings.shape[1] > 2:
         data['z'] = umap_embeddings[:, 2]
     
     source = ColumnDataSource(data)
     
+    # Create initial view with all points visible
+    view = CDSView(source=source, filters=[BooleanFilter([True] * len(cluster_labels))])
+    
     # Create figure
     tools = "pan,wheel_zoom,box_zoom,reset,save"
     
     if is_3d:
         # 3D visualization logic would go here
-        # Note: Bokeh doesn't support true 3D plots, would need to use alternative
         pass
     else:
         p = figure(width=800, height=600, tools=tools)
         
-        # Add points
-        circles = p.circle('x', 'y', source=source,
+        # Add points with view
+        circles = p.circle('x', 'y',
+                         source=source,
+                         view=view,
                          size=8,
                          fill_color='colors',
                          fill_alpha=0.6,
@@ -115,9 +121,9 @@ def create_bokeh_scatter(umap_embeddings, colors, df, text_col, desc_col, cluste
                 <div style="background-color: white; opacity: 0.95; border: 1px solid gray; 
                      border-radius: 5px; padding: 10px; width: 300px;">
                     <div style="word-wrap: break-word; white-space: pre-wrap;">
-                        <span style="font-weight: bold;">Texto:</span> 
+                        <span style="font-weight: bold;">Título</span> 
                         <span style="display: block; margin: 5px 0;">@text</span>
-                        <span style="font-weight: bold;">Descrição:</span>
+                        <span style="font-weight: bold;">Narrativa</span>
                         <span style="display: block; margin: 5px 0;">@description</span>
                         <span style="font-weight: bold;">Cluster:</span>
                         <span style="display: block;">@cluster_info{safe}</span>
@@ -141,7 +147,132 @@ def create_bokeh_scatter(umap_embeddings, colors, df, text_col, desc_col, cluste
         p.xaxis.axis_label = 'UMAP Dimensão 1'
         p.yaxis.axis_label = 'UMAP Dimensão 2'
         
-        return p
+        return p, source, view  # Return plot, source and view for interactivity
+
+def create_altair_scatter(umap_embeddings, df, text_col, desc_col, cluster_labels, cluster_names=None):
+    """Create an interactive Altair scatter plot with toggles."""
+    import altair as alt
+    import streamlit as st
+    
+    # Ensure umap_embeddings is a numpy array
+    umap_embeddings = np.array(umap_embeddings)
+    cluster_labels = np.array(cluster_labels)
+    
+    # Prepare cluster names
+    def get_cluster_name(label):
+        if label == -1:
+            return 'Outliers'
+        elif cluster_names and label in cluster_names:
+            return cluster_names[label]  # Removendo o "Cluster X -" do início
+        else:
+            return f'Cluster {label}'
+    
+    # Prepare data with cluster information
+    plot_df = pd.DataFrame({
+        'x': umap_embeddings[:, 0],
+        'y': umap_embeddings[:, 1],
+        'text': df[text_col],
+        'description': df[desc_col] if desc_col else [''] * len(df),
+        'cluster': cluster_labels,
+        'cluster_name': [get_cluster_name(label) for label in cluster_labels],
+        'size': np.ones(len(cluster_labels))  # Tamanho uniforme por enquanto
+    })
+    
+    # Calculando padding para centralização
+    x_min, x_max = plot_df['x'].min(), plot_df['x'].max()
+    y_min, y_max = plot_df['y'].min(), plot_df['y'].max()
+    x_padding = (x_max - x_min) * 0.1
+    y_padding = (y_max - y_min) * 0.1
+    
+    # Definindo cores para os clusters
+    unique_clusters = sorted(list(set(cluster_labels)))
+    cluster_options = [get_cluster_name(label) for label in unique_clusters]
+    
+    # Cores distintas para os clusters
+    CLUSTER_COLORS = {
+        name: color for name, color in zip(
+            cluster_options,
+            ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+        )
+    }
+    
+    # Criando a seleção interativa
+    click = alt.selection_single(
+        fields=['cluster_name'],
+        on='click',
+        empty='none'
+    )
+    
+    # Configurando a opacidade baseada na seleção
+    opacity_condition = alt.condition(
+        click,
+        alt.value(1),
+        alt.value(0.3)
+    )
+    
+    # Calculando centroides dos clusters para labels
+    cluster_centroids = plot_df.groupby('cluster_name').agg({
+        'x': 'mean',
+        'y': 'mean'
+    }).reset_index()
+    
+    # Criando o gráfico base
+    scatter_base = alt.Chart(plot_df).mark_circle(
+        stroke='lightgray',
+        strokeWidth=1,
+    ).encode(
+        x=alt.X('x:Q',
+            title=None,  
+            scale=alt.Scale(domain=[x_min - x_padding, x_max + x_padding]),
+            axis=alt.Axis(ticks=False, labels=False, grid=False)
+        ),
+        y=alt.Y('y:Q',
+            title=None,  
+            scale=alt.Scale(domain=[y_min - y_padding, y_max + y_padding]),
+            axis=alt.Axis(ticks=False, labels=False, grid=False)
+        ),
+        size=alt.Size(
+            'size:Q',
+            scale=alt.Scale(range=[50, 400]),
+            legend=None
+        ),
+        color=alt.Color(
+            'cluster_name:N',
+            scale=alt.Scale(domain=list(CLUSTER_COLORS.keys()),
+                          range=list(CLUSTER_COLORS.values())),
+            legend=None  # Removendo a legenda da direita
+        ),
+        opacity=opacity_condition,
+        tooltip=[
+            alt.Tooltip('text:N', title='Título'),
+            alt.Tooltip('description:N', title='Descrição'),
+            alt.Tooltip('cluster_name:N', title='Cluster')
+        ]
+    ).add_selection(click)
+    
+    # Criando a camada de labels dos clusters
+    text_labels = alt.Chart(cluster_centroids).mark_text(
+        align='center',
+        baseline='middle',
+        fontSize=14,
+        font='Arial',
+        fontWeight='bold'
+    ).encode(
+        x='x:Q',
+        y='y:Q',
+        text='cluster_name:N',
+        opacity=alt.value(1)  
+    )
+    
+    # Combinando as camadas
+    final_chart = (scatter_base + text_labels).properties(
+        width=1200,  # Aumentando ainda mais a largura
+        height=800   # Aumentando a altura também
+    ).configure_view(
+        strokeWidth=0
+    ).interactive()
+    
+    return final_chart
 
 def get_visualization_params():
     """Get visualization parameters from sidebar."""
