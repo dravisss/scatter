@@ -9,6 +9,7 @@ from bokeh.plotting import figure
 from bokeh.models import ColumnDataSource, HoverTool, CustomJS, TapTool, CDSView, BooleanFilter, IndexFilter
 from bokeh.layouts import column
 import pandas as pd
+from adjustText import adjust_text
 
 # Disable Numba threading
 os.environ["NUMBA_THREADING_LAYER"] = "omp"
@@ -44,9 +45,15 @@ def cluster_data(embeddings, min_cluster_size, min_samples, cluster_selection_ep
         cluster_selection_epsilon=cluster_selection_epsilon,
         cluster_selection_method=cluster_selection_method,
         core_dist_n_jobs=1,  # Force single thread
-        algorithm='generic'  # Use more stable algorithm
+        algorithm='generic',  # Use more stable algorithm
+        prediction_data=True  # Enable prediction data for probabilities
     )
-    return clusterer.fit_predict(embeddings)
+    cluster_labels = clusterer.fit_predict(embeddings)
+    
+    # Get probabilities for each point
+    probabilities = clusterer.probabilities_
+    
+    return cluster_labels, probabilities
 
 def get_cluster_colors(cluster_labels, cluster_names=None):
     """Generate colors and labels for clusters."""
@@ -216,6 +223,22 @@ def create_altair_scatter(umap_embeddings, df, text_col, desc_col, cluster_label
         'y': 'mean'
     }).reset_index()
     
+    # Criando a camada de labels dos clusters
+    text_labels = alt.Chart(cluster_centroids).mark_text(
+        align='center',
+        baseline='middle',
+        fontSize=15,  # Fonte menor
+        font='Arial',
+        fontWeight='normal',  # Não usar negrito
+        dx=15,  # Deslocar horizontalmente
+        dy=-15   # Deslocar verticalmente
+    ).encode(
+        x='x:Q',
+        y='y:Q',
+        text=alt.Text('cluster_name:N'),
+        opacity=alt.value(0.7)  # Reduzir opacidade
+    )
+    
     # Criando o gráfico base
     scatter_base = alt.Chart(plot_df).mark_circle(
         stroke='lightgray',
@@ -249,20 +272,6 @@ def create_altair_scatter(umap_embeddings, df, text_col, desc_col, cluster_label
             alt.Tooltip('cluster_name:N', title='Cluster')
         ]
     ).add_selection(click)
-    
-    # Criando a camada de labels dos clusters
-    text_labels = alt.Chart(cluster_centroids).mark_text(
-        align='center',
-        baseline='middle',
-        fontSize=14,
-        font='Arial',
-        fontWeight='bold'
-    ).encode(
-        x='x:Q',
-        y='y:Q',
-        text='cluster_name:N',
-        opacity=alt.value(1)  
-    )
     
     # Combinando as camadas
     final_chart = (scatter_base + text_labels).properties(
